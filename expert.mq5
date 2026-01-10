@@ -13,10 +13,18 @@
 
 // Parâmetros de entrada
 input double LoteInicial = 1.0;        // Lote inicial
-input int Alvo = 150;                  // Alvo em pontos
-input int Stop = 250;                  // Stop em pontos
 input int MaxReversoes = 2;            // Máximo de reversões
+
+// Configurações específicas para Mini Índice (WIN)
+input int AlvoWIN = 150;               // Alvo em pontos (WIN)
+input int StopWIN = 250;               // Stop em pontos (WIN)
+
+// Configurações específicas para Mini Dólar (WDO)
+input int AlvoWDO = 150;               // Alvo em pontos (WDO)
+input int StopWDO = 250;               // Stop em pontos (WDO)
 input int DiferencaHorarioBrasilia = 0; // Diferença MT para Brasília (ex: MT+3 = digite -3)
+input int HoraEncerramento = 17;       // Hora de encerramento das posições (Brasília)
+input int MinutoEncerramento = 50;     // Minuto de encerramento das posições (Brasília)
 input string ChaveLicenca = "";        // Chave de licença
 
 // Configurações do painel
@@ -232,6 +240,10 @@ int OnInit()
    Print("Diferença configurada: ", DiferencaHorarioBrasilia, " horas");
    Print("═══════════════════════════════════════════════════");
    Print("Horários de entrada (Brasília): 10:00, 10:30, 11:00, 12:00");
+   Print("Horário de encerramento: ", StringFormat("%02d:%02d", HoraEncerramento, MinutoEncerramento));
+   Print("───────────────────────────────────────────────────");
+   Print("Configurações WIN: Alvo=", AlvoWIN, " | Stop=", StopWIN);
+   Print("Configurações WDO: Alvo=", AlvoWDO, " | Stop=", StopWDO);
    Print("═══════════════════════════════════════════════════");
    
    // Inicializa lotes
@@ -321,6 +333,31 @@ void OnTick()
       mesAtual = horarioAtual.mon;
    }
    
+   // Verifica se está no horário de encerramento
+   static bool posicoesEncerradas = false;
+   if(horarioAtual.hour == HoraEncerramento && 
+      horarioAtual.min == MinutoEncerramento && 
+      horarioAtual.sec < 5)
+   {
+      if(!posicoesEncerradas)
+      {
+         FecharTodasPosicoes();
+         posicoesEncerradas = true;
+      }
+   }
+   else if(horarioAtual.hour != HoraEncerramento || horarioAtual.min != MinutoEncerramento)
+   {
+      posicoesEncerradas = false; // Reset para o próximo dia
+   }
+   
+   // Bloqueia novas entradas após o horário de encerramento
+   bool horarioPermitido = true;
+   if(horarioAtual.hour > HoraEncerramento || 
+      (horarioAtual.hour == HoraEncerramento && horarioAtual.min >= MinutoEncerramento))
+   {
+      horarioPermitido = false;
+   }
+   
    // Verifica cada horário programado
    for(int i = 0; i < 4; i++)
    {
@@ -331,12 +368,13 @@ void OnTick()
                                           IntegerToString(horarioAtual.hour) + ":" +
                                           IntegerToString(horarioAtual.min) + ":00");
       
-      // Verifica se é o horário correto E ainda não executou hoje
+      // Verifica se é o horário correto E ainda não executou hoje E está em horário permitido
       if(horarioAtual.hour == horariosEntrada[i][0] && 
          horarioAtual.min == horariosEntrada[i][1] && 
          horarioAtual.sec < 2 &&  // Janela reduzida para 2 segundos
          !ordemAberta[i] &&
-         ultimaExecucao[i] != minutoAtual)  // Garante execução única por minuto
+         ultimaExecucao[i] != minutoAtual &&  // Garante execução única por minuto
+         horarioPermitido)  // Bloqueia após horário de encerramento
       {
          Print("\n🎯 Gatilho de entrada ativado - Horário ", horariosEntrada[i][0], ":", StringFormat("%02d", horariosEntrada[i][1]));
          Print("   Timestamp do minuto: ", TimeToString(minutoAtual, TIME_DATE|TIME_MINUTES));
@@ -877,15 +915,74 @@ void AtualizarPainel()
 }
 
 //+------------------------------------------------------------------+
+//| Fecha todas as posições abertas (final do pregão)                |
+//+------------------------------------------------------------------+
+void FecharTodasPosicoes()
+{
+   Print("\n╔═══════════════════════════════════════════════════╗");
+   Print("║   🔴 ENCERRAMENTO DO PREGÃO - FECHANDO POSIÇÕES   ║");
+   Print("╚═══════════════════════════════════════════════════╝\n");
+   
+   int totalFechadas = 0;
+   
+   // Fecha todas as posições do símbolo atual
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong posTicket = PositionGetTicket(i);
+      if(posTicket > 0)
+      {
+         if(PositionGetString(POSITION_SYMBOL) == _Symbol)
+         {
+            double profit = PositionGetDouble(POSITION_PROFIT);
+            ENUM_POSITION_TYPE tipo = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+            
+            if(trade.PositionClose(posTicket))
+            {
+               Print("✓ Posição #", posTicket, " fechada | Tipo: ", 
+                     (tipo == POSITION_TYPE_BUY ? "COMPRA" : "VENDA"), 
+                     " | P/L: ", DoubleToString(profit, 2));
+               totalFechadas++;
+            }
+            else
+            {
+               Print("❌ Erro ao fechar posição #", posTicket, ": ", GetLastError());
+            }
+         }
+      }
+   }
+   
+   // Reseta variáveis de controle de todos os horários
+   for(int i = 0; i < 4; i++)
+   {
+      ordemAberta[i] = false;
+      reversaoAtual[i] = 0;
+      loteAtual[i] = LoteInicial;
+      ticketAtual[i] = 0;
+      ultimoDealProcessado[i] = 0;
+   }
+   
+   Print("\n📊 Total de posições fechadas: ", totalFechadas);
+   Print("═══════════════════════════════════════════════════\n");
+   
+   // Atualiza P/L final
+   CalcularPL();
+   AtualizarPainel();
+}
+
+//+------------------------------------------------------------------+
 //| Abre ordem de venda                                              |
 //+------------------------------------------------------------------+
 void AbrirVenda(int indice)
 {
    double preco = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    
+   // Seleciona valores de Stop e Alvo baseado no símbolo
+   int stopPontos = isMiniDolar ? StopWDO : StopWIN;
+   int alvoPontos = isMiniDolar ? AlvoWDO : AlvoWIN;
+   
    // Ajusta pontos de acordo com o símbolo (WIN ou WDO)
-   double stopAjustado = Stop * multiplicadorPontos * _Point;
-   double alvoAjustado = Alvo * multiplicadorPontos * _Point;
+   double stopAjustado = stopPontos * multiplicadorPontos * _Point;
+   double alvoAjustado = alvoPontos * multiplicadorPontos * _Point;
    
    double sl = preco + stopAjustado;
    double tp = preco - alvoAjustado;
@@ -909,8 +1006,8 @@ void AbrirVenda(int indice)
       Print("Horário: ", horariosEntrada[indice][0], ":", StringFormat("%02d", horariosEntrada[indice][1]));
       Print("Lote: ", loteAtual[indice]);
       Print("Preço: ", preco);
-      Print("SL: ", sl, " (", Stop, " pontos x ", multiplicadorPontos, ")");
-      Print("TP: ", tp, " (", Alvo, " pontos x ", multiplicadorPontos, ")");
+      Print("SL: ", sl, " (", stopPontos, " pontos x ", multiplicadorPontos, ")");
+      Print("TP: ", tp, " (", alvoPontos, " pontos x ", multiplicadorPontos, ")");
       Print("Reversão: ", reversaoAtual[indice], "/", MaxReversoes);
       Print("Magic Number: ", magicNumber);
       Print("Retcode: ", trade.ResultRetcode(), " - ", trade.ResultRetcodeDescription());
@@ -950,9 +1047,13 @@ void AbrirCompra(int indice)
 {
    double preco = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    
+   // Seleciona valores de Stop e Alvo baseado no símbolo
+   int stopPontos = isMiniDolar ? StopWDO : StopWIN;
+   int alvoPontos = isMiniDolar ? AlvoWDO : AlvoWIN;
+   
    // Ajusta pontos de acordo com o símbolo (WIN ou WDO)
-   double stopAjustado = Stop * multiplicadorPontos * _Point;
-   double alvoAjustado = Alvo * multiplicadorPontos * _Point;
+   double stopAjustado = stopPontos * multiplicadorPontos * _Point;
+   double alvoAjustado = alvoPontos * multiplicadorPontos * _Point;
    
    double sl = preco - stopAjustado;
    double tp = preco + alvoAjustado;
@@ -975,8 +1076,8 @@ void AbrirCompra(int indice)
       Print("Símbolo: ", _Symbol, " (", (isMiniDolar ? "Mini Dólar" : "Mini Índice"), ")");
       Print("Lote: ", loteAtual[indice]);
       Print("Preço: ", preco);
-      Print("SL: ", sl, " (", Stop, " pontos x ", multiplicadorPontos, ")");
-      Print("TP: ", tp, " (", Alvo, " pontos x ", multiplicadorPontos, ")");
+      Print("SL: ", sl, " (", stopPontos, " pontos x ", multiplicadorPontos, ")");
+      Print("TP: ", tp, " (", alvoPontos, " pontos x ", multiplicadorPontos, ")");
       Print("Reversão: ", reversaoAtual[indice], "/", MaxReversoes);
       Print("Magic Number: ", magicNumber);
       Print("Retcode: ", trade.ResultRetcode(), " - ", trade.ResultRetcodeDescription());
@@ -1087,11 +1188,11 @@ void VerificarESLTP(int indice)
                Print("\n🔄 INICIANDO REVERSÃO ", reversaoAtual[indice] + 1, "/", MaxReversoes);
                Print("📊 Lote atual: ", DoubleToString(loteAtual[indice], 2));
                
-               // Dobra o lote para recuperação
-               loteAtual[indice] = loteAtual[indice] * 2.0;
+               // Mantém o lote inicial (não dobra mais)
+               loteAtual[indice] = LoteInicial;
                reversaoAtual[indice]++;
                
-               Print("📊 Novo lote (dobrado): ", DoubleToString(loteAtual[indice], 2));
+               Print("📊 Lote mantido (inicial): ", DoubleToString(loteAtual[indice], 2));
                Print("📊 Nova reversão: ", reversaoAtual[indice]);
                
                Sleep(500);
@@ -1209,11 +1310,11 @@ void VerificarOrdem(int indice)
          Print("\n🔄 INICIANDO REVERSÃO ", reversaoAtual[indice] + 1, "/", MaxReversoes);
          Print("📊 Lote atual: ", DoubleToString(loteAtual[indice], 2));
          
-         // Dobra o lote para recuperação
-         loteAtual[indice] = loteAtual[indice] * 2.0;
+         // Mantém o lote inicial (não dobra mais)
+         loteAtual[indice] = LoteInicial;
          reversaoAtual[indice]++;
          
-         Print("📊 Novo lote (dobrado): ", DoubleToString(loteAtual[indice], 2));
+         Print("📊 Lote mantido (inicial): ", DoubleToString(loteAtual[indice], 2));
          Print("📊 Nova reversão: ", reversaoAtual[indice]);
          
          Sleep(500);
