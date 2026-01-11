@@ -22,6 +22,11 @@ input int StopWIN = 250;               // Stop em pontos (WIN)
 // Configurações específicas para Mini Dólar (WDO)
 input int AlvoWDO = 150;               // Alvo em pontos (WDO)
 input int StopWDO = 250;               // Stop em pontos (WDO)
+
+// Proteção de Capital
+input bool UsarBreakEven = true;       // Ativar break-even automático
+input bool UsarStopDiario = true;      // Ativar stop diário
+input double StopDiario = 500.00;      // Stop diário em reais (0 = desativado)
 input int DiferencaHorarioBrasilia = 0; // Diferença MT para Brasília (ex: MT+3 = digite -3)
 input int HoraEncerramento = 17;       // Hora de encerramento das posições (Brasília)
 input int MinutoEncerramento = 50;     // Minuto de encerramento das posições (Brasília)
@@ -45,6 +50,7 @@ double loteAtual[4];
 ulong ticketAtual[4] = {0, 0, 0, 0};
 ulong ultimoDealProcessado[4] = {0, 0, 0, 0}; // Controle de deals já processados
 datetime ultimaExecucao[4] = {0, 0, 0, 0}; // Controle de última execução por horário
+bool breakEvenAtivado[4] = {false, false, false, false}; // Controle de break-even ativado
 
 // Variáveis para detecção de símbolo
 bool isMiniDolar = false;
@@ -98,10 +104,7 @@ void ConfigurarCoresGrafico()
    ChartSetInteger(0, CHART_COLOR_BID, clrBlue);
    ChartSetInteger(0, CHART_COLOR_ASK, clrRed);
    
-   // Força redesenho do gráfico
    ChartRedraw(0);
-   
-   Print("✓ Esquema de cores aplicado: Fundo branco, candles verde/vermelho");
 }
 
 //+------------------------------------------------------------------+
@@ -115,38 +118,20 @@ void DetectarSimbolo()
    if(StringFind(simbolo, "WDO") >= 0)
    {
       isMiniDolar = true;
-      // No mini dólar: 1 tick = 0.5 = 500 pontos
-      // Para converter pontos de entrada (baseados em WIN) para WDO
-      // WIN: 1 ponto = 1, tick = 5 pontos
-      // WDO: 1 ponto = 0.001, tick = 0.5 (500 pontos)
-      // Multiplicador: 500/5 = 100
       multiplicadorPontos = 100.0;
-      Print("═══════════════════════════════════════════════════");
-      Print("📊 MINI DÓLAR DETECTADO (WDO)");
-      Print("Multiplicador de pontos: ", multiplicadorPontos);
-      Print("Tick size: ", SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE));
-      Print("Point: ", _Point);
-      Print("═══════════════════════════════════════════════════");
+      Print("Mini Dólar detectado (WDO)");
    }
-   // Verifica se é Mini Índice (WIN)
    else if(StringFind(simbolo, "WIN") >= 0)
    {
       isMiniDolar = false;
       multiplicadorPontos = 1.0;
-      Print("═══════════════════════════════════════════════════");
-      Print("📊 MINI ÍNDICE DETECTADO (WIN)");
-      Print("Multiplicador de pontos: ", multiplicadorPontos);
-      Print("Tick size: ", SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE));
-      Print("Point: ", _Point);
-      Print("═══════════════════════════════════════════════════");
+      Print("Mini Índice detectado (WIN)");
    }
    else
    {
-      // Símbolo desconhecido - usa padrão WIN
       isMiniDolar = false;
       multiplicadorPontos = 1.0;
-      Print("⚠️ Símbolo não reconhecido: ", simbolo);
-      Print("   Usando configuração padrão (WIN)");
+      Print("Símbolo não reconhecido, usando padrão WIN");
    }
 }
 
@@ -192,59 +177,22 @@ int OnInit()
    
    if(!licencaValida)
    {
-      string msg = "╔════════════════════════════════════════╗\n";
-      msg += "║        LICENÇA INVÁLIDA OU EXPIRADA!   ║\n";
-      msg += "╚════════════════════════════════════════╝\n\n";
-      msg += "Hardware ID da sua conta:\n";
-      msg += hardwareID + "\n\n";
-      msg += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
-      msg += "Entre em contato para ativar sua licença:\n";
-      msg += "Site: tradereb.com.br\n";
-      msg += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n";
-      msg += "Envie seu Hardware ID para receber a chave";
+      string msg = "LICENÇA INVÁLIDA OU EXPIRADA!\n\n";
+      msg += "Hardware ID: " + hardwareID + "\n\n";
+      msg += "Entre em contato: tradereb.com.br";
       
-      MessageBox(msg, "Robô Reversão WIN - Ativação", MB_OK | MB_ICONWARNING);
-      
-      Print("═══════════════════════════════════════════════════");
-      Print("LICENÇA NÃO ATIVADA");
-      Print("═══════════════════════════════════════════════════");
-      Print("Hardware ID: ", hardwareID);
-      Print("Entre em contato: tradereb.com.br");
-      Print("═══════════════════════════════════════════════════");
+      MessageBox(msg, "Robô Reversão - Ativação", MB_OK | MB_ICONWARNING);
+      Print("Licença não ativada. Hardware ID: ", hardwareID);
       
       return(INIT_FAILED);
    }
    
-   // Licença OK - continua inicialização
-   Print("═══════════════════════════════════════════════════");
-   Print("LICENÇA ATIVADA COM SUCESSO!");
-   Print("Hardware ID: ", hardwareID);
-   Print("═══════════════════════════════════════════════════");
+   Print("Licença ativada - Hardware ID: ", hardwareID);
    
    // Detecta símbolo e configura multiplicador de pontos
    DetectarSimbolo();
    
-   // Configura esquema de cores do gráfico
    ConfigurarCoresGrafico();
-   
-   // Exibe informações de fuso horário
-   MqlDateTime horarioMT, horarioBR;
-   TimeToStruct(TimeCurrent(), horarioMT);
-   horarioBR = ObterHorarioBrasilia();
-   
-   Print("═══════════════════════════════════════════════════");
-   Print("CONFIGURAÇÃO DE FUSO HORÁRIO");
-   Print("═══════════════════════════════════════════════════");
-   Print("Horário do MetaTrader: ", StringFormat("%02d:%02d", horarioMT.hour, horarioMT.min));
-   Print("Horário de Brasília: ", StringFormat("%02d:%02d", horarioBR.hour, horarioBR.min));
-   Print("Diferença configurada: ", DiferencaHorarioBrasilia, " horas");
-   Print("═══════════════════════════════════════════════════");
-   Print("Horários de entrada (Brasília): 10:00, 10:30, 11:00, 12:00");
-   Print("Horário de encerramento: ", StringFormat("%02d:%02d", HoraEncerramento, MinutoEncerramento));
-   Print("───────────────────────────────────────────────────");
-   Print("Configurações WIN: Alvo=", AlvoWIN, " | Stop=", StopWIN);
-   Print("Configurações WDO: Alvo=", AlvoWDO, " | Stop=", StopWDO);
-   Print("═══════════════════════════════════════════════════");
    
    // Inicializa lotes
    for(int i = 0; i < 4; i++)
@@ -275,10 +223,9 @@ int OnInit()
    // Atualiza painel com valores calculados
    AtualizarPainel();
    
-   // Força redesenho final
    ChartRedraw(0);
    
-   Print("Robô Reversão iniciado - Operacional");
+   Print("Robô iniciado com sucesso");
    return(INIT_SUCCEEDED);
 }
 
@@ -298,17 +245,10 @@ void OnTick()
 {
    if(!licencaValida) return;
    
-   // Verifica se a licença expirou durante execução
    if(dataExpiracao > 0 && TimeCurrent() > dataExpiracao)
    {
       licencaValida = false;
-      Alert("⚠️ LICENÇA EXPIROU! Robô será desativado.");
-      Print("═══════════════════════════════════════════════════");
-      Print("⚠️  LICENÇA EXPIRADA DURANTE EXECUÇÃO!");
-      Print("Data de expiração: ", TimeToString(dataExpiracao, TIME_DATE));
-      Print("Robô será desativado.");
-      Print("Entre em contato para renovação: tradereb.com.br");
-      Print("═══════════════════════════════════════════════════");
+      Alert("Licença expirada. Robô desativado.");
       return;
    }
    
@@ -373,14 +313,17 @@ void OnTick()
          horarioAtual.min == horariosEntrada[i][1] && 
          horarioAtual.sec < 2 &&  // Janela reduzida para 2 segundos
          !ordemAberta[i] &&
-         ultimaExecucao[i] != minutoAtual &&  // Garante execução única por minuto
-         horarioPermitido)  // Bloqueia após horário de encerramento
+         ultimaExecucao[i] != minutoAtual &&
+         horarioPermitido)
       {
-         Print("\n🎯 Gatilho de entrada ativado - Horário ", horariosEntrada[i][0], ":", StringFormat("%02d", horariosEntrada[i][1]));
-         Print("   Timestamp do minuto: ", TimeToString(minutoAtual, TIME_DATE|TIME_MINUTES));
-         Print("   Última execução: ", TimeToString(ultimaExecucao[i], TIME_DATE|TIME_MINUTES));
+         // Verifica stop diário antes de abrir nova entrada
+         if(UsarStopDiario && StopDiario > 0 && plDiario <= -StopDiario)
+         {
+            Print("Stop diário atingido. P/L: ", plDiario, " | Limite: -", StopDiario);
+            continue;
+         }
          
-         ultimaExecucao[i] = minutoAtual;  // Marca como executado ANTES de abrir
+         ultimaExecucao[i] = minutoAtual;
          AbrirVenda(i);
       }
       
@@ -503,14 +446,8 @@ bool ValidarLicenca(string chave)
    if(dtCheck.year < 2024 || dtCheck.year > 2050)
       return false;
    
-   // Verifica se a licença está expirada
    if(TimeCurrent() > dataExpiracao)
    {
-      Print("═══════════════════════════════════════════════════");
-      Print("⚠️  LICENÇA EXPIRADA!");
-      Print("Data de expiração: ", TimeToString(dataExpiracao, TIME_DATE));
-      Print("Data atual: ", TimeToString(TimeCurrent(), TIME_DATE));
-      Print("═══════════════════════════════════════════════════");
       return false;
    }
    
@@ -608,10 +545,7 @@ void CriarPainel()
    int linhaY = PosY;
    
    // Fundo principal com borda
-   if(!ObjectCreate(0, "Painel_Borda", OBJ_RECTANGLE_LABEL, 0, 0, 0))
-   {
-      Print("Aviso: Erro ao criar Painel_Borda: ", GetLastError());
-   }
+   ObjectCreate(0, "Painel_Borda", OBJ_RECTANGLE_LABEL, 0, 0, 0);
    ObjectSetInteger(0, "Painel_Borda", OBJPROP_XDISTANCE, PosX + 4);
    ObjectSetInteger(0, "Painel_Borda", OBJPROP_YDISTANCE, PosY - 2);
    ObjectSetInteger(0, "Painel_Borda", OBJPROP_XSIZE, largura + 4);
@@ -622,10 +556,7 @@ void CriarPainel()
    ObjectSetInteger(0, "Painel_Borda", OBJPROP_BACK, false);
    
    // Painel principal
-   if(!ObjectCreate(0, "Painel_Fundo", OBJ_RECTANGLE_LABEL, 0, 0, 0))
-   {
-      Print("Aviso: Erro ao criar Painel_Fundo: ", GetLastError());
-   }
+   ObjectCreate(0, "Painel_Fundo", OBJ_RECTANGLE_LABEL, 0, 0, 0);
    ObjectSetInteger(0, "Painel_Fundo", OBJPROP_XDISTANCE, PosX);
    ObjectSetInteger(0, "Painel_Fundo", OBJPROP_YDISTANCE, PosY);
    ObjectSetInteger(0, "Painel_Fundo", OBJPROP_XSIZE, largura);
@@ -636,10 +567,7 @@ void CriarPainel()
    ObjectSetInteger(0, "Painel_Fundo", OBJPROP_BACK, false);
    
    // Cabeçalho preto
-   if(!ObjectCreate(0, "Painel_Header", OBJ_RECTANGLE_LABEL, 0, 0, 0))
-   {
-      Print("Aviso: Erro ao criar Painel_Header: ", GetLastError());
-   }
+   ObjectCreate(0, "Painel_Header", OBJ_RECTANGLE_LABEL, 0, 0, 0);
    ObjectSetInteger(0, "Painel_Header", OBJPROP_XDISTANCE, PosX);
    ObjectSetInteger(0, "Painel_Header", OBJPROP_YDISTANCE, PosY);
    ObjectSetInteger(0, "Painel_Header", OBJPROP_XSIZE, largura);
@@ -766,11 +694,7 @@ void CriarPainel()
    
    linhaY += 25;
 
-   // Site
    CriarTexto("Painel_Site", "WWW.TRADEREB.COM.BR", PosX + 15, linhaY, 9, clrDodgerBlue, true);
-   
-   
-   Print("✓ Painel criado com sucesso");
 }
 
 //+------------------------------------------------------------------+
@@ -816,15 +740,17 @@ void CriarLinha(string nome, int x, int y, int comprimento, color cor)
 //+------------------------------------------------------------------+
 void CriarTexto(string nome, string texto, int x, int y, int tamanho, color cor, bool negrito, ENUM_ANCHOR_POINT anchor = ANCHOR_LEFT_UPPER)
 {
-   ObjectCreate(0, nome, OBJ_LABEL, 0, 0, 0);
-   ObjectSetInteger(0, nome, OBJPROP_XDISTANCE, x);
-   ObjectSetInteger(0, nome, OBJPROP_YDISTANCE, y);
-   ObjectSetInteger(0, nome, OBJPROP_CORNER, CORNER_LEFT_UPPER);
-   ObjectSetInteger(0, nome, OBJPROP_ANCHOR, anchor);
-   ObjectSetString(0, nome, OBJPROP_TEXT, texto);
-   ObjectSetString(0, nome, OBJPROP_FONT, negrito ? "Arial Bold" : "Arial");
-   ObjectSetInteger(0, nome, OBJPROP_FONTSIZE, tamanho);
-   ObjectSetInteger(0, nome, OBJPROP_COLOR, cor);
+   if(ObjectCreate(0, nome, OBJ_LABEL, 0, 0, 0))
+   {
+      ObjectSetInteger(0, nome, OBJPROP_XDISTANCE, x);
+      ObjectSetInteger(0, nome, OBJPROP_YDISTANCE, y);
+      ObjectSetInteger(0, nome, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+      ObjectSetInteger(0, nome, OBJPROP_ANCHOR, anchor);
+      ObjectSetString(0, nome, OBJPROP_TEXT, texto);
+      ObjectSetString(0, nome, OBJPROP_FONT, negrito ? "Arial Bold" : "Arial");
+      ObjectSetInteger(0, nome, OBJPROP_FONTSIZE, tamanho);
+      ObjectSetInteger(0, nome, OBJPROP_COLOR, cor);
+   }
 }
 
 //+------------------------------------------------------------------+
@@ -919,13 +845,10 @@ void AtualizarPainel()
 //+------------------------------------------------------------------+
 void FecharTodasPosicoes()
 {
-   Print("\n╔═══════════════════════════════════════════════════╗");
-   Print("║   🔴 ENCERRAMENTO DO PREGÃO - FECHANDO POSIÇÕES   ║");
-   Print("╚═══════════════════════════════════════════════════╝\n");
+   Print("Encerrando posições do pregão");
    
    int totalFechadas = 0;
    
-   // Fecha todas as posições do símbolo atual
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
       ulong posTicket = PositionGetTicket(i);
@@ -933,25 +856,14 @@ void FecharTodasPosicoes()
       {
          if(PositionGetString(POSITION_SYMBOL) == _Symbol)
          {
-            double profit = PositionGetDouble(POSITION_PROFIT);
-            ENUM_POSITION_TYPE tipo = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
-            
             if(trade.PositionClose(posTicket))
             {
-               Print("✓ Posição #", posTicket, " fechada | Tipo: ", 
-                     (tipo == POSITION_TYPE_BUY ? "COMPRA" : "VENDA"), 
-                     " | P/L: ", DoubleToString(profit, 2));
                totalFechadas++;
-            }
-            else
-            {
-               Print("❌ Erro ao fechar posição #", posTicket, ": ", GetLastError());
             }
          }
       }
    }
    
-   // Reseta variáveis de controle de todos os horários
    for(int i = 0; i < 4; i++)
    {
       ordemAberta[i] = false;
@@ -959,10 +871,11 @@ void FecharTodasPosicoes()
       loteAtual[i] = LoteInicial;
       ticketAtual[i] = 0;
       ultimoDealProcessado[i] = 0;
+      breakEvenAtivado[i] = false;
    }
    
-   Print("\n📊 Total de posições fechadas: ", totalFechadas);
-   Print("═══════════════════════════════════════════════════\n");
+   if(totalFechadas > 0)
+      Print("Total de posições fechadas: ", totalFechadas);
    
    // Atualiza P/L final
    CalcularPL();
@@ -997,46 +910,12 @@ void AbrirVenda(int indice)
    
    if(trade.Sell(loteAtual[indice], _Symbol, preco, sl, tp, "Rev_" + IntegerToString(indice)))
    {
-      ulong ticket = trade.ResultDeal();
-      
-      Print("═══════════════════════════════════════");
-      Print("📉 VENDA ABERTA");
-      Print("Ticket: #", ticket);
-      Print("Símbolo: ", _Symbol, " (", (isMiniDolar ? "Mini Dólar" : "Mini Índice"), ")");
-      Print("Horário: ", horariosEntrada[indice][0], ":", StringFormat("%02d", horariosEntrada[indice][1]));
-      Print("Lote: ", loteAtual[indice]);
-      Print("Preço: ", preco);
-      Print("SL: ", sl, " (", stopPontos, " pontos x ", multiplicadorPontos, ")");
-      Print("TP: ", tp, " (", alvoPontos, " pontos x ", multiplicadorPontos, ")");
-      Print("Reversão: ", reversaoAtual[indice], "/", MaxReversoes);
-      Print("Magic Number: ", magicNumber);
-      Print("Retcode: ", trade.ResultRetcode(), " - ", trade.ResultRetcodeDescription());
-      Print("═══════════════════════════════════════");
-      
+      Print("VENDA | Lote: ", loteAtual[indice], " | Reversão: ", reversaoAtual[indice], "/", MaxReversoes);
       ordemAberta[indice] = true;
-      
-      // Aguarda um pouco e verifica se a posição realmente tem SL/TP
-      Sleep(100);
-      for(int i = 0; i < PositionsTotal(); i++)
-      {
-         ulong posTicket = PositionGetTicket(i);
-         if(posTicket > 0)
-         {
-            if(PositionGetString(POSITION_SYMBOL) == _Symbol && 
-               PositionGetInteger(POSITION_MAGIC) == magicNumber)
-            {
-               double posSL = PositionGetDouble(POSITION_SL);
-               double posTP = PositionGetDouble(POSITION_TP);
-               Print("✓ Posição aberta com SL=", posSL, " TP=", posTP);
-               break;
-            }
-         }
-      }
    }
    else
    {
-      Print("❌ Erro ao abrir venda: ", GetLastError(), " - ", trade.ResultRetcodeDescription());
-      Print("   Retcode: ", trade.ResultRetcode());
+      Print("Erro ao abrir venda: ", trade.ResultRetcodeDescription());
    }
 }
 
@@ -1068,45 +947,12 @@ void AbrirCompra(int indice)
    
    if(trade.Buy(loteAtual[indice], _Symbol, preco, sl, tp, "Rev_" + IntegerToString(indice)))
    {
-      ulong ticket = trade.ResultDeal();
-      
-      Print("═══════════════════════════════════════");
-      Print("📈 COMPRA ABERTA (Reversão)");
-      Print("Ticket: #", ticket);
-      Print("Símbolo: ", _Symbol, " (", (isMiniDolar ? "Mini Dólar" : "Mini Índice"), ")");
-      Print("Lote: ", loteAtual[indice]);
-      Print("Preço: ", preco);
-      Print("SL: ", sl, " (", stopPontos, " pontos x ", multiplicadorPontos, ")");
-      Print("TP: ", tp, " (", alvoPontos, " pontos x ", multiplicadorPontos, ")");
-      Print("Reversão: ", reversaoAtual[indice], "/", MaxReversoes);
-      Print("Magic Number: ", magicNumber);
-      Print("Retcode: ", trade.ResultRetcode(), " - ", trade.ResultRetcodeDescription());
-      Print("═══════════════════════════════════════");
-      
+      Print("COMPRA | Lote: ", loteAtual[indice], " | Reversão: ", reversaoAtual[indice], "/", MaxReversoes);
       ordemAberta[indice] = true;
-      
-      // Aguarda um pouco e verifica se a posição realmente tem SL/TP
-      Sleep(100);
-      for(int i = 0; i < PositionsTotal(); i++)
-      {
-         ulong posTicket = PositionGetTicket(i);
-         if(posTicket > 0)
-         {
-            if(PositionGetString(POSITION_SYMBOL) == _Symbol && 
-               PositionGetInteger(POSITION_MAGIC) == magicNumber)
-            {
-               double posSL = PositionGetDouble(POSITION_SL);
-               double posTP = PositionGetDouble(POSITION_TP);
-               Print("✓ Posição aberta com SL=", posSL, " TP=", posTP);
-               break;
-            }
-         }
-      }
    }
    else
    {
-      Print("❌ Erro ao abrir compra: ", GetLastError(), " - ", trade.ResultRetcodeDescription());
-      Print("   Retcode: ", trade.ResultRetcode());
+      Print("Erro ao abrir compra: ", trade.ResultRetcodeDescription());
    }
 }
 
@@ -1133,6 +979,35 @@ void VerificarESLTP(int indice)
       double sl = PositionGetDouble(POSITION_SL);
       double tp = PositionGetDouble(POSITION_TP);
       double volume = PositionGetDouble(POSITION_VOLUME);
+      double precoAbertura = PositionGetDouble(POSITION_PRICE_OPEN);
+      
+      // Break-even automático: Move stop para entrada quando atingir 50% do alvo
+      if(UsarBreakEven && !breakEvenAtivado[indice])
+      {
+         double distanciaAlvo = 0;
+         double distanciaAtual = 0;
+         
+         if(tipo == POSITION_TYPE_SELL)
+         {
+            distanciaAlvo = precoAbertura - tp;  // Distância total até o alvo
+            distanciaAtual = precoAbertura - precoAtual;  // Distância já percorrida
+         }
+         else if(tipo == POSITION_TYPE_BUY)
+         {
+            distanciaAlvo = tp - precoAbertura;  // Distância total até o alvo
+            distanciaAtual = precoAtual - precoAbertura;  // Distância já percorrida
+         }
+         
+         // Se atingiu 50% do alvo, move stop para break-even
+         if(distanciaAtual >= (distanciaAlvo * 0.5))
+         {
+            if(trade.PositionModify(posTicket, precoAbertura, tp))
+            {
+               Print("Break-even ativado | Posição #", posTicket, " | Stop movido para entrada: ", precoAbertura);
+               breakEvenAtivado[indice] = true;
+            }
+         }
+      }
       
       bool deveFechar = false;
       bool foiStopLoss = false;
@@ -1172,67 +1047,42 @@ void VerificarESLTP(int indice)
       
       if(deveFechar)
       {
-         Print("\n⚡ ", motivo, " ATINGIDO - Fechando posição #", posTicket);
-         Print("   Tipo: ", (tipo == POSITION_TYPE_BUY ? "COMPRA" : "VENDA"));
-         Print("   Preço atual: ", precoAtual);
-         Print("   SL: ", sl, " | TP: ", tp);
-         
-         // Fecha a posição
          if(trade.PositionClose(posTicket))
          {
-            Print("   ✓ Posição fechada com sucesso!");
-            
-            // Se foi STOP LOSS e ainda tem reversões disponíveis, faz a reversão IMEDIATAMENTE
             if(foiStopLoss && reversaoAtual[indice] < MaxReversoes)
             {
-               Print("\n🔄 INICIANDO REVERSÃO ", reversaoAtual[indice] + 1, "/", MaxReversoes);
-               Print("📊 Lote atual: ", DoubleToString(loteAtual[indice], 2));
-               
-               // Mantém o lote inicial (não dobra mais)
-               loteAtual[indice] = LoteInicial;
+               loteAtual[indice] += 1;
                reversaoAtual[indice]++;
-               
-               Print("📊 Lote mantido (inicial): ", DoubleToString(loteAtual[indice], 2));
-               Print("📊 Nova reversão: ", reversaoAtual[indice]);
                
                Sleep(500);
                
-               // Inverte a direção (a favor do movimento que causou o stop)
                if(tipo == POSITION_TYPE_SELL)
                {
-                  // Fechou VENDA, preço subiu e bateu stop = abre COMPRA
-                  Print("➡️  Abrindo COMPRA (reversão)\n");
                   AbrirCompra(indice);
                }
                else if(tipo == POSITION_TYPE_BUY)
                {
-                  // Fechou COMPRA, preço caiu e bateu stop = abre VENDA  
-                  Print("➡️  Abrindo VENDA (reversão)\n");
                   AbrirVenda(indice);
                }
             }
             else if(foiStopLoss)
             {
-               // Atingiu máximo de reversões
-               Print("\n⛔ MÁXIMO DE REVERSÕES ATINGIDO!\n");
+               Print("Máximo de reversões atingido");
                ordemAberta[indice] = false;
                reversaoAtual[indice] = 0;
                loteAtual[indice] = LoteInicial;
                ultimoDealProcessado[indice] = 0;
+               breakEvenAtivado[indice] = false;
             }
             else
             {
-               // Foi TAKE PROFIT - finalizou com lucro
-               Print("\n✅ GAIN ATINGIDO!\n");
+               Print("Gain atingido");
                ordemAberta[indice] = false;
                reversaoAtual[indice] = 0;
                loteAtual[indice] = LoteInicial;
                ultimoDealProcessado[indice] = 0;
+               breakEvenAtivado[indice] = false;
             }
-         }
-         else
-         {
-            Print("   ❌ Erro ao fechar posição: ", GetLastError());
          }
       }
    }
@@ -1287,7 +1137,6 @@ void VerificarOrdem(int indice)
       // Marca como processado ANTES de processar
       ultimoDealProcessado[indice] = dealTicket;
       
-      // Pega informações do fechamento
       double lucro = HistoryDealGetDouble(dealTicket, DEAL_PROFIT);
       double comissao = HistoryDealGetDouble(dealTicket, DEAL_COMMISSION);
       double swap = HistoryDealGetDouble(dealTicket, DEAL_SWAP);
@@ -1295,62 +1144,29 @@ void VerificarOrdem(int indice)
       
       ENUM_DEAL_TYPE dealType = (ENUM_DEAL_TYPE)HistoryDealGetInteger(dealTicket, DEAL_TYPE);
       
-      Print("\n┌────────────────────────────────────────────────┐");
-      Print("│ ⚡ POSIÇÃO FECHADA - Horário ", horariosEntrada[indice][0], ":", StringFormat("%02d", horariosEntrada[indice][1]), "        │");
-      Print("├────────────────────────────────────────────────┤");
-      Print("│ Deal #", dealTicket, "                                    │");
-      Print("│ Tipo deal: ", (dealType == DEAL_TYPE_BUY ? "BUY (fechou venda)" : "SELL (fechou compra)"), "        │");
-      Print("│ Resultado: ", (lucroLiquido >= 0 ? "+" : ""), DoubleToString(lucroLiquido, 2), " USD                  │");
-      Print("│ Reversão atual: ", reversaoAtual[indice], "/", MaxReversoes, "                        │");
-      Print("└────────────────────────────────────────────────┘");
-      
-      // Verifica se precisa fazer reversão (prejuízo e ainda tem reversões disponíveis)
       if(lucroLiquido < 0 && reversaoAtual[indice] < MaxReversoes)
       {
-         Print("\n🔄 INICIANDO REVERSÃO ", reversaoAtual[indice] + 1, "/", MaxReversoes);
-         Print("📊 Lote atual: ", DoubleToString(loteAtual[indice], 2));
-         
-         // Mantém o lote inicial (não dobra mais)
-         loteAtual[indice] = LoteInicial;
+         loteAtual[indice] += 1;
          reversaoAtual[indice]++;
-         
-         Print("📊 Lote mantido (inicial): ", DoubleToString(loteAtual[indice], 2));
-         Print("📊 Nova reversão: ", reversaoAtual[indice]);
          
          Sleep(500);
          
-         // Inverte a direção (a favor do movimento que causou o stop)
-         // Nota: deal BUY = fechou venda | deal SELL = fechou compra
          if(dealType == DEAL_TYPE_BUY)
          {
-            // Fechou VENDA (deal BUY), preço subiu e bateu stop = abre COMPRA
-            Print("➡️  Abrindo COMPRA (reversão)\n");
             AbrirCompra(indice);
          }
          else if(dealType == DEAL_TYPE_SELL)
          {
-            // Fechou COMPRA (deal SELL), preço caiu e bateu stop = abre VENDA  
-            Print("➡️  Abrindo VENDA (reversão)\n");
             AbrirVenda(indice);
          }
       }
       else
       {
-         // Finalizou o ciclo (gain ou máx reversões)
-         if(lucroLiquido > 0)
-         {
-            Print("\n✅ GAIN ATINGIDO! Lucro: ", DoubleToString(lucroLiquido, 2), " USD\n");
-         }
-         else
-         {
-            Print("\n⛔ MÁXIMO DE REVERSÕES ATINGIDO! Prejuízo final: ", DoubleToString(lucroLiquido, 2), " USD\n");
-         }
-         
-         // Reset das variáveis deste horário
          ordemAberta[indice] = false;
          reversaoAtual[indice] = 0;
          loteAtual[indice] = LoteInicial;
          ultimoDealProcessado[indice] = 0;
+         breakEvenAtivado[indice] = false;
       }
       
       // Atualiza P/L e painel
@@ -1366,9 +1182,7 @@ void VerificarOrdem(int indice)
 //+------------------------------------------------------------------+
 void ResetDiario()
 {
-   Print("\n┌", StringFill(50, '─'), "┐");
-   Print("│ RESET DIÁRIO - ", TimeToString(TimeCurrent(), TIME_DATE|TIME_MINUTES), StringFill(18, ' '), "│");
-   Print("└", StringFill(50, '─'), "┘\n");
+   Print("Reset diário executado");
    
    for(int i = 0; i < 4; i++)
    {
@@ -1377,13 +1191,12 @@ void ResetDiario()
       loteAtual[i] = LoteInicial;
       ticketAtual[i] = 0;
       ultimoDealProcessado[i] = 0;
-      ultimaExecucao[i] = 0;  // Limpa controle de execução
+      ultimaExecucao[i] = 0;
+      breakEvenAtivado[i] = false;
    }
    
    CalcularPL();
    AtualizarPainel();
-   
-   Print("Reset realizado com sucesso!");
 }
 
 //+------------------------------------------------------------------+
