@@ -25,8 +25,10 @@ input int StopWDO = 250;               // Stop em pontos (WDO)
 
 // Proteção de Capital
 input bool UsarBreakEven = true;       // Ativar break-even automático
+input double BreakEvenPercentual = 70; // Percentual do alvo para ativar break-even (50-100%)
 input bool UsarStopDiario = true;      // Ativar stop diário
 input double StopDiario = 500.00;      // Stop diário em reais (0 = desativado)
+input int IncrementoAlvo = 100;        // Incremento de pontos no alvo por reversão
 input int DiferencaHorarioBrasilia = 0; // Diferença MT para Brasília (ex: MT+3 = digite -3)
 input int HoraEncerramento = 17;       // Hora de encerramento das posições (Brasília)
 input int MinutoEncerramento = 50;     // Minuto de encerramento das posições (Brasília)
@@ -74,7 +76,7 @@ int horariosEntrada[4][2] = {
    {10, 0},   // 10:00
    {10, 30},  // 10:30
    {11, 0},   // 11:00
-   {12, 0}    // 12:00
+   {9, 15}    // 09:15
 };
 
 //+------------------------------------------------------------------+
@@ -893,6 +895,9 @@ void AbrirVenda(int indice)
    int stopPontos = isMiniDolar ? StopWDO : StopWIN;
    int alvoPontos = isMiniDolar ? AlvoWDO : AlvoWIN;
    
+   // Incremento progressivo no alvo: a cada reversão, adiciona IncrementoAlvo pontos
+   alvoPontos += (reversaoAtual[indice] * IncrementoAlvo);
+   
    // Ajusta pontos de acordo com o símbolo (WIN ou WDO)
    double stopAjustado = stopPontos * multiplicadorPontos * _Point;
    double alvoAjustado = alvoPontos * multiplicadorPontos * _Point;
@@ -910,7 +915,7 @@ void AbrirVenda(int indice)
    
    if(trade.Sell(loteAtual[indice], _Symbol, preco, sl, tp, "Rev_" + IntegerToString(indice)))
    {
-      Print("VENDA | Lote: ", loteAtual[indice], " | Reversão: ", reversaoAtual[indice], "/", MaxReversoes);
+      Print("VENDA | Lote: ", loteAtual[indice], " | Reversão: ", reversaoAtual[indice], "/", MaxReversoes, " | Alvo: ", alvoPontos, " pts");
       ordemAberta[indice] = true;
    }
    else
@@ -930,6 +935,9 @@ void AbrirCompra(int indice)
    int stopPontos = isMiniDolar ? StopWDO : StopWIN;
    int alvoPontos = isMiniDolar ? AlvoWDO : AlvoWIN;
    
+   // Incremento progressivo no alvo: a cada reversão, adiciona IncrementoAlvo pontos
+   alvoPontos += (reversaoAtual[indice] * IncrementoAlvo);
+   
    // Ajusta pontos de acordo com o símbolo (WIN ou WDO)
    double stopAjustado = stopPontos * multiplicadorPontos * _Point;
    double alvoAjustado = alvoPontos * multiplicadorPontos * _Point;
@@ -947,7 +955,7 @@ void AbrirCompra(int indice)
    
    if(trade.Buy(loteAtual[indice], _Symbol, preco, sl, tp, "Rev_" + IntegerToString(indice)))
    {
-      Print("COMPRA | Lote: ", loteAtual[indice], " | Reversão: ", reversaoAtual[indice], "/", MaxReversoes);
+      Print("COMPRA | Lote: ", loteAtual[indice], " | Reversão: ", reversaoAtual[indice], "/", MaxReversoes, " | Alvo: ", alvoPontos, " pts");
       ordemAberta[indice] = true;
    }
    else
@@ -998,8 +1006,9 @@ void VerificarESLTP(int indice)
             distanciaAtual = precoAtual - precoAbertura;  // Distância já percorrida
          }
          
-         // Se atingiu 50% do alvo, move stop para break-even
-         if(distanciaAtual >= (distanciaAlvo * 0.5))
+         // Se atingiu o percentual configurado do alvo, move stop para break-even
+         double percentualBreakEven = BreakEvenPercentual / 100.0; // Converte de % para decimal
+         if(distanciaAtual >= (distanciaAlvo * percentualBreakEven))
          {
             if(trade.PositionModify(posTicket, precoAbertura, tp))
             {
